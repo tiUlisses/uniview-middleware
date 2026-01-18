@@ -1,1 +1,1 @@
-initial
+Informações sobre a API estão nos PDFs constantes no projeto
