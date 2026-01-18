@@ -80,15 +80,35 @@ O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camer
 
 > ⚠️ **Aviso**: `RECEIVER_HOST` deve ser o IP/host acessível pela câmera (não `0.0.0.0`). Em cenários com NAT, IP público, VPN ou reverse proxy, use o endereço exposto para a câmera alcançar o callback.
 
-### Payloads de subscription/keepalive
+## Como rodar (guia único)
 
-Os endpoints exigem payloads JSON **conforme o PDF**. O binário gera os payloads usando as variáveis de ambiente de subscription, mantendo o schema indicado no LiteAPI (AddressType, IPAddress, Port, Duration, Type, ImagePushMode; e Duration/Reference no keepalive).
+Fluxo recomendado: **`.env` → CSV → `run`**. O daemon lê o `.env`, carrega o CSV com as câmeras e cria **um worker por linha** para manter subscriptions ativas e enviar eventos para o servidor configurado no `.env`.
 
-## Como rodar
+### 1) `.env`
 
-### Passo a passo (daemon com múltiplas câmeras)
+Crie/ajuste seu `.env` (ou use `ENV_FILE`) com as variáveis usadas pelo daemon e pelo receiver:
 
-1) **Preparar `examples/cameras.csv` com 5 câmeras válidas**
+```dotenv
+# Listener/receiver (callback que a câmera alcança)
+RECEIVER_HOST=192.168.1.100
+RECEIVER_PORT=8080
+
+# Subscription / keepalive
+DURATION=60
+TYPE_MASK=97663
+IMAGE_PUSH_MODE=0
+
+# Forwarding (destino analytics)
+ANALYTICS_HOST=analytics.local
+ANALYTICS_PORT=9000
+ANALYTICS_PATH=/webhooks/uniview
+```
+
+> ⚠️ **Importante**: o `RECEIVER_HOST` deve ser acessível pela câmera (não use `0.0.0.0` como callback).
+
+### 2) CSV
+
+Crie o CSV de câmeras (uma linha por câmera):
 
 ```bash
 cat > examples/cameras.csv <<'CSV'
@@ -100,36 +120,29 @@ cat > examples/cameras.csv <<'CSV'
 CSV
 ```
 
-2) **Definir env vars obrigatórias**
+O formato é:
+
+```
+<ip>,<porta>,<login>,<senha>,<modelo>
+```
+
+Se `modelo` estiver vazio, assume `uniview`.
+
+### 3) `run`
+
+Execute o daemon apontando para o CSV:
 
 ```bash
 export CAMERA_CSV_FILE=examples/cameras.csv
-export RECEIVER_HOST=192.168.1.100
-export RECEIVER_PORT=8080
-export TYPE_MASK=97663
-export DURATION=60
-export IMAGE_PUSH_MODE=0
-```
-
-> ⚠️ **Importante**: o servidor deve estar acessível pela câmera usando o `RECEIVER_HOST` informado. Não use `0.0.0.0` como callback; informe o IP/host que a câmera consegue alcançar.
-
-3) **Configurar encaminhamento para o servidor de analytics**
-
-```bash
-export ANALYTICS_HOST=analytics.local
-export ANALYTICS_PORT=9000
-export ANALYTICS_PATH=/webhooks/uniview
-```
-
-4) **Executar**
-
-```bash
 ./univiewd run
 ```
 
-5) **Verificar no servidor externo o recebimento das notificações**
+#### O que acontece no `run`
 
-O receiver normaliza e encaminha os eventos com os campos `tag`, `categoria`, `camera_ip`, `ivs_type`, `message`. Confirme no servidor externo que esses campos chegam conforme esperado.
+- O processo **carrega o `.env`** (e `ENV_FILE`, se definido).
+- O **CSV define o caminho e as credenciais**; **cada linha gera um worker** dedicado.
+- Cada worker executa o ciclo **subscribe → keepalive → resubscribe** continuamente (keepalive automático).
+- O receiver **normaliza e envia** os eventos recebidos para o servidor configurado em `ANALYTICS_*`.
 
 ## Supervisor / Workers
 
@@ -147,79 +160,7 @@ As variáveis abaixo controlam o comportamento do supervisor/worker. Valores de 
 - `KEEPALIVE_BACKOFF_BASE`: base do backoff em falhas de keepalive (duration). Default: `2s`.
 - `KEEPALIVE_BACKOFF_MAX`: limite máximo do backoff (duration). Default: `30s`.
 
-### 1) Iniciar receiver
-
-```bash
-RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
-```
-
-- Receiver expõe métricas simples em `/debug/vars`.
-
-Exemplo com forwarding:
-
-```bash
-export ANALYTICS_HOST=localhost
-export ANALYTICS_PORT=9000
-export ANALYTICS_PATH=/webhooks/uniview
-export EVENT_TAG=uniview
-export EVENT_CATEGORY=event
-export ALARM_TYPE_MAPPING_JSON='{"Motion":{"ivs_type":"motion","message":"Motion detected"}}'
-RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
-```
-
-### 2) Criar subscription
-
-```bash
-export UNV_BASE_URL=http://192.168.1.10
-export UNV_USER=admin
-export UNV_PASS=secret
-export RECEIVER_HOST=192.168.1.100
-export RECEIVER_PORT=8080
-export DURATION=60
-export TYPE_MASK=97663
-export IMAGE_PUSH_MODE=0
-
-./univiewd subscribe
-```
-
-### 3) Keepalive
-
-```bash
-export SUBSCRIPTION_ID=<id-retornado>
-
-./univiewd keepalive
-```
-
-### 4) Rodar tudo em modo daemon
-
-```bash
-export CAMERA_CSV_FILE=examples/cameras.csv
-export RECEIVER_HOST=192.168.1.100
-export RECEIVER_PORT=8080
-export DURATION=60
-export TYPE_MASK=97663
-export IMAGE_PUSH_MODE=0
-export ANALYTICS_HOST=localhost
-export ANALYTICS_PORT=9000
-export ANALYTICS_PATH=/webhooks/uniview
-
-./univiewd run
-```
-
 > Observação: o callback URL final será `http://RECEIVER_HOST:RECEIVER_PORT/LAPI/V1.0/System/Event/Notification`.
-
-## Exemplos de payloads e eventos
-
-- Exemplo de evento recebido: `examples/notification_event.json`
-- ACK esperado: `examples/ack.json`
-
-### Exemplo com curl (receiver)
-
-```bash
-curl -X POST http://localhost:8080/LAPI/V1.0/System/Event/Notification/1 \
-  -H 'Content-Type: application/json' \
-  -d @examples/notification_event.json
-```
 
 ## CSV de câmeras
 
@@ -233,27 +174,7 @@ Suporte a CSV com formato:
 - Exemplo em `examples/cameras.csv` com 5 entradas; cada linha gera um worker próprio.
 
 Para rodar o daemon com múltiplas câmeras, defina `CAMERA_CSV_FILE` com o caminho do CSV.
-Quando definido, o comando `run` ignora `UNV_BASE_URL`, `UNV_USER` e `UNV_PASS` e abre
-uma subscription/keepalive por câmera (cada linha do CSV cria um client próprio).
-
-Quando `CAMERA_CSV_FILE` não está definido, o comando `run` usa as credenciais e URL únicas
-das variáveis `UNV_BASE_URL`, `UNV_USER` e `UNV_PASS`.
-
-Exemplo:
-
-```bash
-export CAMERA_CSV_FILE=examples/cameras.csv
-export RECEIVER_HOST=192.168.1.100
-export RECEIVER_PORT=8080
-export TYPE_MASK=97663
-export DURATION=60
-export IMAGE_PUSH_MODE=0
-export ANALYTICS_HOST=localhost
-export ANALYTICS_PORT=9000
-export ANALYTICS_PATH=/webhooks/uniview
-
-./univiewd run
-```
+Quando definido, o comando `run` abre uma subscription/keepalive por câmera (cada linha do CSV cria um client próprio).
 
 ## Observabilidade
 
