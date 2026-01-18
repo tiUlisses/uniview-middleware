@@ -38,6 +38,16 @@ examples/                  # Payloads de exemplo + CSV
 
 - `RECEIVER_HOST`: host do listener (default `0.0.0.0`)
 - `RECEIVER_PORT`: porta do listener (default `8080`)
+- `EVENT_TAG`: tag do payload normalizado (default `uniview`)
+- `EVENT_CATEGORY`: categoria do payload normalizado (default `event`)
+
+#### Normalização de eventos (forwarding)
+
+O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camera_ip`, `ivs_type`, `message`.
+
+- `camera_ip` é extraído na seguinte ordem: `X-Forwarded-For` (primeiro IP), `X-Real-IP`, `req.RemoteAddr`.
+- `ALARM_TYPE_MAPPING_JSON`: JSON com mapeamento de `AlarmType` → `{ "ivs_type": "...", "message": "..." }`.
+- `ALARM_TYPE_MAPPING_FILE`: caminho para arquivo JSON com o mesmo formato (tem precedência sobre o env).
 
 ### Forwarding (encaminhar eventos recebidos)
 
@@ -87,6 +97,9 @@ Exemplo com forwarding:
 
 ```bash
 export FORWARD_URL=http://localhost:9000/webhooks/uniview
+export EVENT_TAG=uniview
+export EVENT_CATEGORY=event
+export ALARM_TYPE_MAPPING_JSON='{"Motion":{"ivs_type":"motion","message":"Motion detected"}}'
 RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
 ```
 
