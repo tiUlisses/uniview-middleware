@@ -1,0 +1,150 @@
+# Uniview LiteAPI (Go) — Subscription + Notifications + Analytics
+
+Integração em Go para câmeras Uniview (LiteAPI / LAPI), cobrindo:
+
+- Autenticação **HTTP Digest** (RFC 2617)
+- **Subscription** de eventos (alarms/analytics)
+- **Keepalive** da subscription
+- **Receiver HTTP** para notificações (push da câmera) com ACK JSON
+- Suporte para assinar **tudo** (bitmask) ou **categorias específicas** via `TYPE_MASK`
+- Componentes modulares (client outbound e receiver inbound)
+
+> Referência principal: `docs/LiteAPI Document for IPC V5.04.pdf` (obrigatória para validar schema e campos)
+
+## Estrutura do repositório
+
+```
+cmd/univiewd               # Binário CLI/daemon
+pkg/uniview/client         # Cliente LiteAPI (outbound)
+pkg/uniview/digest         # HTTP Digest transport
+pkg/uniview/receiver       # Receiver HTTP (inbound)
+examples/                  # Payloads de exemplo + CSV
+```
+
+## Requisitos
+
+- Go 1.21+
+- Credenciais via env vars (não commitar usuários/senhas)
+
+## Configuração por variáveis de ambiente
+
+### Autenticação / conexão
+
+- `UNV_BASE_URL`: base URL da câmera (ex.: `http://192.168.1.10`)
+- `UNV_USER`: usuário
+- `UNV_PASS`: senha
+
+### Receiver
+
+- `RECEIVER_HOST`: host do listener (default `0.0.0.0`)
+- `RECEIVER_PORT`: porta do listener (default `8080`)
+
+### Subscription / keepalive
+
+- `DURATION`: duração da subscription (segundos)
+- `TYPE_MASK`: máscara de eventos (ex.: `97663` **se aplicável no PDF**)
+- `IMAGE_PUSH_MODE`: modo de push de imagens (se aplicável no PDF)
+- `SUBSCRIPTION_ID`: id para keepalive/unsubscribe (quando necessário)
+
+### Payloads obrigatórios (não inventamos campos)
+
+Os endpoints exigem payloads JSON **conforme o PDF**. Para evitar inventar campos, o binário usa templates fornecidos pelo operador.
+
+- `SUBSCRIBE_PAYLOAD` **ou** `SUBSCRIBE_PAYLOAD_FILE`
+- `KEEPALIVE_PAYLOAD` **ou** `KEEPALIVE_PAYLOAD_FILE`
+
+Templates suportam placeholders:
+
+- `{{CALLBACK_URL}}`
+- `{{DURATION}}`
+- `{{TYPE_MASK}}`
+- `{{IMAGE_PUSH_MODE}}`
+- `{{SUBSCRIPTION_ID}}`
+
+Veja `examples/subscribe_payload_template.json` e `examples/keepalive_payload_template.json` para referência de placeholders. Substitua os nomes dos campos pelos definidos no PDF.
+
+## Como rodar
+
+### 1) Iniciar receiver
+
+```bash
+RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
+```
+
+- Receiver expõe métricas simples em `/debug/vars`.
+
+### 2) Criar subscription
+
+```bash
+export UNV_BASE_URL=http://192.168.1.10
+export UNV_USER=admin
+export UNV_PASS=secret
+export RECEIVER_HOST=192.168.1.100
+export RECEIVER_PORT=8080
+export DURATION=60
+export TYPE_MASK=97663
+export IMAGE_PUSH_MODE=0
+export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
+
+./univiewd subscribe
+```
+
+### 3) Keepalive
+
+```bash
+export SUBSCRIPTION_ID=<id-retornado>
+export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+
+./univiewd keepalive
+```
+
+### 4) Rodar tudo em modo daemon
+
+```bash
+export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
+export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+
+./univiewd run
+```
+
+## Exemplos de payloads e eventos
+
+- Template de subscription: `examples/subscribe_payload_template.json`
+- Template de keepalive: `examples/keepalive_payload_template.json`
+- Exemplo de evento recebido: `examples/notification_event.json`
+- ACK esperado: `examples/ack.json`
+
+### Exemplo com curl (receiver)
+
+```bash
+curl -X POST http://localhost:8080/LAPI/V1.0/System/Event/Notification/1 \
+  -H 'Content-Type: application/json' \
+  -d @examples/notification_event.json
+```
+
+## CSV de câmeras
+
+Suporte a CSV com formato:
+
+```
+<ip>,<porta>,<login>,<senha>,<modelo>
+```
+
+- Se `modelo` estiver vazio, assume `uniview`.
+- Exemplo em `examples/cameras.csv`.
+
+## Observabilidade
+
+- Logs com ciclo subscribe/keepalive e recebimento de eventos.
+- Métricas básicas via `expvar` (`/debug/vars`).
+
+## Testes
+
+```bash
+go test ./...
+```
+
+## Notas importantes
+
+- **Não inventar campos**: use o PDF `docs/LiteAPI Document for IPC V5.04.pdf` para definir os nomes dos campos corretos.
+- **Segurança**: não commite credenciais. Use `.env` (gitignored) ou env vars.
