@@ -1,7 +1,6 @@
 package main
 
 import (
-	"bufio"
 	"bytes"
 	"context"
 	"encoding/json"
@@ -17,12 +16,13 @@ import (
 	"time"
 
 	clientpkg "uniview-middleware/pkg/uniview/client"
+	configpkg "uniview-middleware/pkg/uniview/config"
 	"uniview-middleware/pkg/uniview/receiver"
 	"uniview-middleware/pkg/uniview/supervisor"
 )
 
 func main() {
-	if err := loadDotEnv(); err != nil {
+	if err := configpkg.LoadDotEnv(); err != nil {
 		log.Printf("failed to load .env: %v", err)
 	}
 	logLevel := getenv("LOG_LEVEL", "info")
@@ -50,47 +50,6 @@ func main() {
 		printUsage()
 		os.Exit(1)
 	}
-}
-
-func loadDotEnv() error {
-	file, err := os.Open(".env")
-	if err != nil {
-		if os.IsNotExist(err) {
-			return nil
-		}
-		return err
-	}
-	defer file.Close()
-
-	scanner := bufio.NewScanner(file)
-	for scanner.Scan() {
-		line := strings.TrimSpace(scanner.Text())
-		if line == "" || strings.HasPrefix(line, "#") {
-			continue
-		}
-		line = strings.TrimSpace(strings.TrimPrefix(line, "export"))
-		key, value, ok := strings.Cut(line, "=")
-		if !ok {
-			continue
-		}
-		key = strings.TrimSpace(key)
-		value = strings.TrimSpace(value)
-		if len(value) >= 2 {
-			if (value[0] == '"' && value[len(value)-1] == '"') || (value[0] == '\'' && value[len(value)-1] == '\'') {
-				value = value[1 : len(value)-1]
-			}
-		}
-		if key == "" {
-			continue
-		}
-		if _, exists := os.LookupEnv(key); exists {
-			continue
-		}
-		if err := os.Setenv(key, value); err != nil {
-			return err
-		}
-	}
-	return scanner.Err()
 }
 
 func runServe(logger *log.Logger) {

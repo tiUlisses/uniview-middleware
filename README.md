@@ -32,6 +32,8 @@ examples/                  # Payloads de exemplo + CSV
 
 O binário tenta carregar automaticamente um arquivo `.env` no diretório atual antes de ler as variáveis. Se o arquivo não existir, ele segue normalmente sem erro. Variáveis já definidas no ambiente têm prioridade.
 
+Se `ENV_FILE` estiver definido, o caminho apontado será carregado **após** o `.env` e sobrescreve seus valores. Isso permite ter múltiplos arquivos de configuração sem alterar o conteúdo do `.env` padrão.
+
 O repositório inclui um `.env.example` com todas as variáveis suportadas e exemplos seguros. Copie para `.env` e ajuste conforme necessário.
 
 Exemplo:
@@ -193,6 +195,9 @@ Suporte a CSV com formato:
 Para rodar o daemon com múltiplas câmeras, defina `CAMERA_CSV_FILE` com o caminho do CSV.
 Quando definido, o comando `run` ignora `UNV_BASE_URL`, `UNV_USER` e `UNV_PASS` e abre
 uma subscription/keepalive por câmera (cada linha do CSV cria um client próprio).
+
+Quando `CAMERA_CSV_FILE` não está definido, o comando `run` usa as credenciais e URL únicas
+das variáveis `UNV_BASE_URL`, `UNV_USER` e `UNV_PASS`.
 
 Exemplo:
 
