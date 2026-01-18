@@ -89,33 +89,48 @@ func NewEnvForwardingHandler(logger *log.Logger) (EventHandler, error) {
 
 // ForwardURLFromEnv resolves the forwarding URL from environment variables.
 func ForwardURLFromEnv() (string, error) {
+	analyticsHost := strings.TrimSpace(os.Getenv("ANALYTICS_HOST"))
+	analyticsPort := strings.TrimSpace(os.Getenv("ANALYTICS_PORT"))
+	analyticsPath := strings.TrimSpace(os.Getenv("ANALYTICS_PATH"))
+	analyticsScheme := strings.TrimSpace(os.Getenv("ANALYTICS_SCHEME"))
+	if analyticsHost != "" || analyticsPort != "" || analyticsPath != "" || analyticsScheme != "" {
+		return buildForwardURL(analyticsHost, analyticsPort, analyticsPath, analyticsScheme, "ANALYTICS")
+	}
+
 	if value := strings.TrimSpace(os.Getenv("FORWARD_URL")); value != "" {
 		return value, nil
 	}
 
-	host := strings.TrimSpace(os.Getenv("FORWARD_HOST"))
-	if host == "" {
-		return "", errors.New("missing FORWARD_URL or FORWARD_HOST")
+	forwardHost := strings.TrimSpace(os.Getenv("FORWARD_HOST"))
+	forwardPort := strings.TrimSpace(os.Getenv("FORWARD_PORT"))
+	forwardPath := strings.TrimSpace(os.Getenv("FORWARD_PATH"))
+	forwardScheme := strings.TrimSpace(os.Getenv("FORWARD_SCHEME"))
+	if forwardHost != "" || forwardPort != "" || forwardPath != "" || forwardScheme != "" {
+		return buildForwardURL(forwardHost, forwardPort, forwardPath, forwardScheme, "FORWARD")
 	}
-	scheme := strings.TrimSpace(os.Getenv("FORWARD_SCHEME"))
+
+	return "", errors.New("missing ANALYTICS_HOST (or legacy FORWARD_HOST) for forwarding")
+}
+
+func buildForwardURL(host, port, path, scheme, prefix string) (string, error) {
+	if host == "" {
+		return "", fmt.Errorf("missing %s_HOST", prefix)
+	}
 	if scheme == "" {
 		scheme = "http"
 	}
-	path := strings.TrimSpace(os.Getenv("FORWARD_PATH"))
 	if path == "" {
 		path = "/"
 	}
 	if !strings.HasPrefix(path, "/") {
 		path = "/" + path
 	}
-
-	if port := strings.TrimSpace(os.Getenv("FORWARD_PORT")); port != "" {
+	if port != "" {
 		if _, err := strconv.Atoi(port); err != nil {
-			return "", fmt.Errorf("invalid FORWARD_PORT: %w", err)
+			return "", fmt.Errorf("invalid %s_PORT: %w", prefix, err)
 		}
 		host = net.JoinHostPort(host, port)
 	}
-
 	forwardURL := url.URL{
 		Scheme: scheme,
 		Host:   host,
