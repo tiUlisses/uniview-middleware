@@ -101,6 +101,22 @@ Veja `examples/subscribe_payload_template.json` e `examples/keepalive_payload_te
 
 ## Como rodar
 
+## Supervisor / Workers
+
+O comando `run` inicia um supervisor que cria **um worker por câmera**. Cada worker roda em loop contínuo de **subscribe → keepalive → resubscribe**, tentando manter a subscription ativa enquanto o processo estiver vivo.
+
+### Variáveis do supervisor
+
+As variáveis abaixo controlam o comportamento do supervisor/worker. Valores de duração aceitam o formato do `time.ParseDuration` (ex.: `15s`, `2m`) ou um inteiro em **segundos**.
+
+- `WORKER_MAX_CONCURRENCY`: máximo de workers em paralelo (int). Default: `4`.
+- `SUBSCRIBE_RETRY_BACKOFF`: espera antes de tentar resubscribe após falha (duration). Default: `15s`.
+- `KEEPALIVE_JITTER`: jitter adicionado ao intervalo de keepalive (duration). Default: `2s`.
+- `WORKER_SHUTDOWN_TIMEOUT`: tempo máximo para shutdown gracioso (duration). Default: `10s`.
+- `MAX_KEEPALIVE_FAILURES` (ou `KEEPALIVE_MAX_FAILURES`): número de falhas consecutivas de keepalive antes de resubscrever (int). Default: `3`.
+- `KEEPALIVE_BACKOFF_BASE`: base do backoff em falhas de keepalive (duration). Default: `2s`.
+- `KEEPALIVE_BACKOFF_MAX`: limite máximo do backoff (duration). Default: `30s`.
+
 ### 1) Iniciar receiver
 
 ```bash
