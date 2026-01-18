@@ -82,22 +82,9 @@ O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camer
 
 > ⚠️ **Aviso**: `RECEIVER_HOST` deve ser o IP/host acessível pela câmera (não `0.0.0.0`). Em cenários com NAT, IP público, VPN ou reverse proxy, use o endereço exposto para a câmera alcançar o callback.
 
-### Payloads obrigatórios (não inventamos campos)
+### Payloads de subscription/keepalive
 
-Os endpoints exigem payloads JSON **conforme o PDF**. Para evitar inventar campos, o binário usa templates fornecidos pelo operador.
-
-- `SUBSCRIBE_PAYLOAD` **ou** `SUBSCRIBE_PAYLOAD_FILE`
-- `KEEPALIVE_PAYLOAD` **ou** `KEEPALIVE_PAYLOAD_FILE`
-
-Templates suportam placeholders:
-
-- `{{CALLBACK_URL}}`
-- `{{DURATION}}`
-- `{{TYPE_MASK}}`
-- `{{IMAGE_PUSH_MODE}}`
-- `{{SUBSCRIPTION_ID}}`
-
-Veja `examples/subscribe_payload_template.json` e `examples/keepalive_payload_template.json` para referência de placeholders. Substitua os nomes dos campos pelos definidos no PDF.
+Os endpoints exigem payloads JSON **conforme o PDF**. O binário gera os payloads usando as variáveis de ambiente de subscription, mantendo o schema indicado no LiteAPI (AddressType, IPAddress, Port, Duration, Type, ImagePushMode; e Duration/Reference no keepalive).
 
 ## Como rodar
 
@@ -119,8 +106,6 @@ CSV
 
 ```bash
 export CAMERA_CSV_FILE=examples/cameras.csv
-export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
-export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
 export RECEIVER_HOST=192.168.1.100
 export RECEIVER_PORT=8080
 export TYPE_MASK=97663
@@ -201,7 +186,6 @@ export RECEIVER_PORT=8080
 export DURATION=60
 export TYPE_MASK=97663
 export IMAGE_PUSH_MODE=0
-export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
 
 ./univiewd subscribe
 ```
@@ -210,7 +194,6 @@ export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
 
 ```bash
 export SUBSCRIPTION_ID=<id-retornado>
-export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
 
 ./univiewd keepalive
 ```
@@ -219,8 +202,6 @@ export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
 
 ```bash
 export CAMERA_CSV_FILE=examples/cameras.csv
-export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
-export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
 export RECEIVER_HOST=192.168.1.100
 export RECEIVER_PORT=8080
 export DURATION=60
@@ -239,8 +220,6 @@ export FORWARD_PATH=/webhooks/uniview
 
 ## Exemplos de payloads e eventos
 
-- Template de subscription: `examples/subscribe_payload_template.json`
-- Template de keepalive: `examples/keepalive_payload_template.json`
 - Exemplo de evento recebido: `examples/notification_event.json`
 - ACK esperado: `examples/ack.json`
 
@@ -274,8 +253,11 @@ Exemplo:
 
 ```bash
 export CAMERA_CSV_FILE=examples/cameras.csv
-export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
-export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+export RECEIVER_HOST=192.168.1.100
+export RECEIVER_PORT=8080
+export TYPE_MASK=97663
+export DURATION=60
+export IMAGE_PUSH_MODE=0
 export FORWARD_HOST=localhost
 export FORWARD_PORT=9000
 export FORWARD_PATH=/webhooks/uniview
