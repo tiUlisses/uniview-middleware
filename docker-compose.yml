@@ -1,0 +1,10 @@
+services:
+  univiewd:
+    build: .
+    env_file: .env
+    environment:
+      CAMERA_CSV_FILE: /data/cameras.csv
+    volumes:
+      - ./examples/cameras.csv:/data/cameras.csv:ro
+    ports:
+      - "8080:8080"

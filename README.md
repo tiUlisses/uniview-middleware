@@ -85,6 +85,34 @@ O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camer
 
 Fluxo recomendado: **`.env` → CSV → `run`**. O daemon lê o `.env`, carrega o CSV com as câmeras e cria **um worker por linha** para manter subscriptions ativas e enviar eventos para o servidor configurado no `.env`.
 
+## Quickstart com Docker
+
+Este repositório inclui um `Dockerfile` multi-stage e um `docker-compose.yml` de exemplo. O fluxo recomendado é **ajustar apenas o `.env`** e garantir que o CSV esteja montado no caminho esperado.
+
+### 1) `.env`
+
+Copie o `.env.example` para `.env` e edite somente esse arquivo com as suas credenciais e destinos:
+
+```bash
+cp .env.example .env
+```
+
+> ⚠️ **Importante**: mantenha o `RECEIVER_CALLBACK_HOST` acessível pela câmera (não use `0.0.0.0` como callback).
+
+### 2) CSV
+
+Garanta que o CSV exista localmente (ex.: `./examples/cameras.csv`). O `docker-compose.yml` monta esse arquivo em `/data/cameras.csv` no container.
+
+Se quiser usar outro arquivo/caminho, ajuste **somente** o volume no `docker-compose.yml` e mantenha `CAMERA_CSV_FILE=/data/cameras.csv` ou atualize-o para refletir o novo destino no container.
+
+### 3) Subir com Docker Compose
+
+```bash
+docker compose up --build
+```
+
+O container executa `univiewd run` automaticamente, carregando o `.env` e o CSV montado.
+
 ### 1) `.env`
 
 Crie/ajuste seu `.env` (ou use `ENV_FILE`) com as variáveis usadas pelo daemon e pelo receiver:
