@@ -56,7 +56,7 @@ func main() {
 }
 
 func runServe(logger *log.Logger) {
-	host := getenv("RECEIVER_HOST", "0.0.0.0")
+	host := getenv("RECEIVER_LISTEN_HOST", "0.0.0.0")
 	port := getenvInt("RECEIVER_PORT", 8080)
 
 	logger.Printf("starting receiver on %s:%d", host, port)
@@ -103,11 +103,7 @@ func runSubscribe(logger *log.Logger) {
 		Label:   cfg.BaseURL,
 		Model:   "uniview",
 	}
-	callbackHost, err := callbackHostForCamera(cfg, camera)
-	if err != nil {
-		logger.Fatalf("callback host: %v", err)
-	}
-	payload, err := buildSubscribePayload(cfg, callbackHost)
+	payload, err := buildSubscribePayload(cfg, camera)
 	if err != nil {
 		logger.Fatalf("subscribe payload: %v", err)
 	}
@@ -135,11 +131,7 @@ func runKeepAlive(logger *log.Logger) {
 		Label:   cfg.BaseURL,
 		Model:   "uniview",
 	}
-	callbackHost, err := callbackHostForCamera(cfg, camera)
-	if err != nil {
-		logger.Fatalf("callback host: %v", err)
-	}
-	payload, err := buildKeepAlivePayload(cfg, callbackHost, subID)
+	payload, err := buildKeepAlivePayload(cfg, camera, subID)
 	if err != nil {
 		logger.Fatalf("keepalive payload: %v", err)
 	}
@@ -171,8 +163,8 @@ func runUnsubscribe(logger *log.Logger) {
 
 func runDaemon(logger *log.Logger) {
 	cfg := loadConfig()
-	host := getenv("RECEIVER_HOST", "0.0.0.0")
-	port := getenvInt("RECEIVER_PORT", 8080)
+	host := cfg.ReceiverListenHost
+	port := cfg.ReceiverPort
 	cameras, err := loadCameraConfigs(cfg)
 	if err != nil {
 		logger.Fatalf("load cameras: %v", err)
@@ -180,14 +172,10 @@ func runDaemon(logger *log.Logger) {
 	if len(cameras) == 0 {
 		logger.Fatalf("no cameras configured")
 	}
-	callbackHost, err := callbackHostForCamera(cfg, cameras[0])
-	if err != nil {
-		logger.Fatalf("callback host: %v", err)
-	}
-	if _, err := buildSubscribePayload(cfg, callbackHost); err != nil {
+	if _, err := buildSubscribePayload(cfg, cameras[0]); err != nil {
 		logger.Fatalf("subscribe payload: %v", err)
 	}
-	if _, err := buildKeepAlivePayload(cfg, callbackHost, ""); err != nil {
+	if _, err := buildKeepAlivePayload(cfg, cameras[0], ""); err != nil {
 		logger.Fatalf("keepalive payload: %v", err)
 	}
 
@@ -240,27 +228,19 @@ type payloadProvider struct {
 }
 
 func (p payloadProvider) SubscribePayload(camera cameraConfig) ([]byte, error) {
-	callbackHost, err := callbackHostForCamera(p.cfg, camera)
-	if err != nil {
-		return nil, err
-	}
-	return buildSubscribePayload(p.cfg, callbackHost)
+	return buildSubscribePayload(p.cfg, camera)
 }
 
 func (p payloadProvider) KeepAlivePayload(camera cameraConfig) ([]byte, error) {
-	callbackHost, err := callbackHostForCamera(p.cfg, camera)
-	if err != nil {
-		return nil, err
-	}
-	return buildKeepAlivePayload(p.cfg, callbackHost, "")
+	return buildKeepAlivePayload(p.cfg, camera, "")
 }
 
 type config struct {
 	BaseURL              string
 	User                 string
 	Pass                 string
-	ReceiverHost         string
 	ReceiverCallbackHost string
+	ReceiverListenHost   string
 	ReceiverPort         int
 	Duration             int
 	TypeMask             int
@@ -272,8 +252,8 @@ func loadConfig() config {
 		BaseURL:              getenv("UNV_BASE_URL", ""),
 		User:                 getenv("UNV_USER", ""),
 		Pass:                 getenv("UNV_PASS", ""),
-		ReceiverHost:         getenv("RECEIVER_HOST", "0.0.0.0"),
 		ReceiverCallbackHost: getenv("RECEIVER_CALLBACK_HOST", ""),
+		ReceiverListenHost:   getenv("RECEIVER_LISTEN_HOST", "0.0.0.0"),
 		ReceiverPort:         getenvInt("RECEIVER_PORT", 8080),
 		Duration:             getenvInt("DURATION", 60),
 		TypeMask:             getenvInt("TYPE_MASK", 0),
@@ -281,18 +261,26 @@ func loadConfig() config {
 	}
 }
 
-func (c config) CallbackURL(callbackHost string) string {
-	return fmt.Sprintf("http://%s:%d/LAPI/V1.0/System/Event/Notification", callbackHost, c.ReceiverPort)
+func (c config) CallbackURL(camera cameraConfig) (string, error) {
+	callbackHost, err := callbackHostForCamera(c, camera)
+	if err != nil {
+		return "", err
+	}
+	return fmt.Sprintf("http://%s:%d/LAPI/V1.0/System/Event/Notification", callbackHost, c.ReceiverPort), nil
 }
 
-func (c config) PayloadConfig(callbackHost, subscriptionID string) payloadpkg.Config {
+func (c config) PayloadConfig(camera cameraConfig, subscriptionID string) (payloadpkg.Config, error) {
+	callbackURL, err := c.CallbackURL(camera)
+	if err != nil {
+		return payloadpkg.Config{}, err
+	}
 	return payloadpkg.Config{
-		CallbackURL:    c.CallbackURL(callbackHost),
+		CallbackURL:    callbackURL,
 		Duration:       c.Duration,
 		TypeMask:       c.TypeMask,
 		ImagePushMode:  c.ImagePushMode,
 		SubscriptionID: subscriptionID,
-	}
+	}, nil
 }
 
 func (c config) KeepAliveInterval() time.Duration {
@@ -317,12 +305,20 @@ func printUsage() {
 	fmt.Println("Usage: univiewd <serve|subscribe|keepalive|unsubscribe|run>")
 }
 
-func buildSubscribePayload(cfg config, callbackHost string) ([]byte, error) {
-	return payloadpkg.BuildSubscribePayload(cfg.PayloadConfig(callbackHost, ""))
+func buildSubscribePayload(cfg config, camera cameraConfig) ([]byte, error) {
+	payloadConfig, err := cfg.PayloadConfig(camera, "")
+	if err != nil {
+		return nil, err
+	}
+	return payloadpkg.BuildSubscribePayload(payloadConfig)
 }
 
-func buildKeepAlivePayload(cfg config, callbackHost, subscriptionID string) ([]byte, error) {
-	return payloadpkg.BuildKeepAlivePayload(cfg.PayloadConfig(callbackHost, subscriptionID))
+func buildKeepAlivePayload(cfg config, camera cameraConfig, subscriptionID string) ([]byte, error) {
+	payloadConfig, err := cfg.PayloadConfig(camera, subscriptionID)
+	if err != nil {
+		return nil, err
+	}
+	return payloadpkg.BuildKeepAlivePayload(payloadConfig)
 }
 
 func callbackHostForCamera(cfg config, camera cameraConfig) (string, error) {
