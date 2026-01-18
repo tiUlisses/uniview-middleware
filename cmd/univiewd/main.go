@@ -18,6 +18,7 @@ import (
 
 	clientpkg "uniview-middleware/pkg/uniview/client"
 	"uniview-middleware/pkg/uniview/receiver"
+	"uniview-middleware/pkg/uniview/supervisor"
 )
 
 func main() {
@@ -214,21 +215,13 @@ func runDaemon(logger *log.Logger) {
 		}
 	}()
 
-	cameraConfigs, err := loadCameraConfigs(cfg)
-	if err != nil {
-		logger.Fatalf("camera config: %v", err)
-	}
-	logger.Printf("starting subscriptions for %d camera(s)", len(cameraConfigs))
-
-	subscriptions := make(map[string]*cameraSubscription, len(cameraConfigs))
-	for _, cam := range cameraConfigs {
-		sub, err := subscribeCamera(ctx, logger, cfg, cam)
-		if err != nil {
-			logger.Printf("camera %s subscribe failed: %v", cam.Label, err)
-			continue
-		}
-		subscriptions[cam.Label] = sub
-		go runCameraKeepAlive(ctx, logger, cfg, sub)
+	supervisorConfig := supervisor.LoadConfigFromEnv()
+	payloads := payloadProvider{cfg: cfg}
+	workerSupervisor := supervisor.New(logger, supervisorConfig, cfg.KeepAliveInterval(), payloads, func() ([]supervisor.CameraConfig, error) {
+		return loadCameraConfigs(cfg)
+	})
+	if err := workerSupervisor.Run(ctx); err != nil {
+		logger.Printf("supervisor stopped: %v", err)
 	}
 
 	<-ctx.Done()
@@ -239,19 +232,18 @@ func runDaemon(logger *log.Logger) {
 	}
 }
 
-type cameraConfig struct {
-	BaseURL string
-	User    string
-	Pass    string
-	Label   string
-	Model   string
+type cameraConfig = supervisor.CameraConfig
+
+type payloadProvider struct {
+	cfg config
 }
 
-type cameraSubscription struct {
-	camera cameraConfig
-	client *clientpkg.Client
-	subID  string
-	ticker *time.Ticker
+func (p payloadProvider) SubscribePayload() ([]byte, error) {
+	return loadPayload(p.cfg, "SUBSCRIBE_PAYLOAD", "SUBSCRIBE_PAYLOAD_FILE")
+}
+
+func (p payloadProvider) KeepAlivePayload() ([]byte, error) {
+	return loadPayload(p.cfg, "KEEPALIVE_PAYLOAD", "KEEPALIVE_PAYLOAD_FILE")
 }
 
 type config struct {
@@ -442,54 +434,4 @@ func loadCameraConfigs(cfg config) ([]cameraConfig, error) {
 		})
 	}
 	return cameras, nil
-}
-
-func subscribeCamera(ctx context.Context, logger *log.Logger, cfg config, cam cameraConfig) (*cameraSubscription, error) {
-	client, err := clientpkg.NewClient(cam.BaseURL, cam.User, cam.Pass, nil)
-	if err != nil {
-		return nil, fmt.Errorf("client init: %w", err)
-	}
-	subscribePayload, err := loadPayload(cfg, "SUBSCRIBE_PAYLOAD", "SUBSCRIBE_PAYLOAD_FILE")
-	if err != nil {
-		return nil, fmt.Errorf("subscribe payload: %w", err)
-	}
-
-	subCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-	subID, resp, err := client.Subscribe(subCtx, clientpkg.SubscribeRequest{Payload: subscribePayload})
-	cancel()
-	if err != nil {
-		return nil, fmt.Errorf("subscribe: %w", err)
-	}
-	logger.Printf("camera %s subscription created id=%s status=%d model=%s", cam.Label, subID, resp.StatusCode, cam.Model)
-	return &cameraSubscription{
-		camera: cam,
-		client: client,
-		subID:  subID,
-	}, nil
-}
-
-func runCameraKeepAlive(ctx context.Context, logger *log.Logger, cfg config, sub *cameraSubscription) {
-	sub.ticker = time.NewTicker(cfg.KeepAliveInterval())
-	defer sub.ticker.Stop()
-
-	for {
-		select {
-		case <-sub.ticker.C:
-			payload, err := loadPayload(cfg, "KEEPALIVE_PAYLOAD", "KEEPALIVE_PAYLOAD_FILE")
-			if err != nil {
-				logger.Printf("camera %s keepalive payload error: %v", sub.camera.Label, err)
-				continue
-			}
-			kaCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
-			resp, err := sub.client.KeepAlive(kaCtx, sub.subID, clientpkg.KeepAliveRequest{Payload: payload})
-			cancel()
-			if err != nil {
-				logger.Printf("camera %s keepalive failed id=%s error=%v", sub.camera.Label, sub.subID, err)
-			} else {
-				logger.Printf("camera %s keepalive ok id=%s status=%d", sub.camera.Label, sub.subID, resp.StatusCode)
-			}
-		case <-ctx.Done():
-			return
-		}
-	}
 }
