@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"log"
 	"math/rand"
+	"net/url"
 	"os"
 	"strconv"
 	"strings"
@@ -21,6 +22,8 @@ const (
 	defaultWorkerShutdown    = 10 * time.Second
 	defaultKeepAliveFailures = 3
 	defaultOperationTimeout  = 10 * time.Second
+	defaultKeepAliveBackoff  = 2 * time.Second
+	defaultKeepAliveMaxBack  = 30 * time.Second
 )
 
 type CameraConfig struct {
@@ -37,6 +40,8 @@ type Config struct {
 	KeepAliveJitter       time.Duration
 	WorkerShutdownTimeout time.Duration
 	MaxKeepAliveFailures  int
+	KeepAliveBackoffBase  time.Duration
+	KeepAliveBackoffMax   time.Duration
 }
 
 type PayloadProvider interface {
@@ -73,7 +78,9 @@ func LoadConfigFromEnv() Config {
 		SubscribeRetryBackoff: getenvDuration("SUBSCRIBE_RETRY_BACKOFF", defaultSubscribeBackoff),
 		KeepAliveJitter:       getenvDuration("KEEPALIVE_JITTER", defaultKeepAliveJitter),
 		WorkerShutdownTimeout: getenvDuration("WORKER_SHUTDOWN_TIMEOUT", defaultWorkerShutdown),
-		MaxKeepAliveFailures:  getenvInt("KEEPALIVE_MAX_FAILURES", defaultKeepAliveFailures),
+		MaxKeepAliveFailures:  getenvIntFromKeys([]string{"MAX_KEEPALIVE_FAILURES", "KEEPALIVE_MAX_FAILURES"}, defaultKeepAliveFailures),
+		KeepAliveBackoffBase:  getenvDuration("KEEPALIVE_BACKOFF_BASE", defaultKeepAliveBackoff),
+		KeepAliveBackoffMax:   getenvDuration("KEEPALIVE_BACKOFF_MAX", defaultKeepAliveMaxBack),
 	}
 }
 
@@ -219,7 +226,7 @@ func (w *Worker) keepAliveLoop(client *clientpkg.Client) error {
 	}
 
 	for {
-		wait := w.nextKeepAliveInterval()
+		wait := w.nextKeepAliveDelay()
 		timer := time.NewTimer(wait)
 		select {
 		case <-w.ctx.Done():
@@ -230,10 +237,12 @@ func (w *Worker) keepAliveLoop(client *clientpkg.Client) error {
 
 		payload, err := w.payloads.KeepAlivePayload()
 		if err != nil {
-			w.logger.Printf("camera %s keepalive payload error: %v", w.camera.Label, err)
 			w.incrementFailure()
+			w.logger.Printf("event=keepalive_payload_error camera_label=%s camera_ip=%s attempts=%d error=%v", w.camera.Label, w.cameraHost(), w.consecutiveFailures, err)
 			if w.consecutiveFailures >= failuresAllowed {
-				return fmt.Errorf("keepalive payload failures exceeded %d", failuresAllowed)
+				if err := w.resetSubscription(client); err != nil {
+					return err
+				}
 			}
 			continue
 		}
@@ -242,15 +251,17 @@ func (w *Worker) keepAliveLoop(client *clientpkg.Client) error {
 		resp, err := client.KeepAlive(kaCtx, w.SubID, clientpkg.KeepAliveRequest{Payload: payload})
 		cancel()
 		if err != nil {
-			w.logger.Printf("camera %s keepalive failed id=%s error=%v", w.camera.Label, w.SubID, err)
 			w.incrementFailure()
+			w.logger.Printf("event=keepalive_failed camera_label=%s camera_ip=%s sub_id=%s attempts=%d error=%v", w.camera.Label, w.cameraHost(), w.SubID, w.consecutiveFailures, err)
 			if w.consecutiveFailures >= failuresAllowed {
-				return fmt.Errorf("keepalive failed %d times", w.consecutiveFailures)
+				if err := w.resetSubscription(client); err != nil {
+					return err
+				}
 			}
 			continue
 		}
 		w.consecutiveFailures = 0
-		w.logger.Printf("camera %s keepalive ok id=%s status=%d", w.camera.Label, w.SubID, resp.StatusCode)
+		w.logger.Printf("event=keepalive_ok camera_label=%s camera_ip=%s sub_id=%s status=%d attempts=%d", w.camera.Label, w.cameraHost(), w.SubID, resp.StatusCode, w.consecutiveFailures)
 	}
 }
 
@@ -269,6 +280,7 @@ func (w *Worker) unsubscribe(client *clientpkg.Client) {
 	} else {
 		w.logger.Printf("camera %s unsubscribed id=%s", w.camera.Label, w.SubID)
 	}
+	w.SubID = ""
 }
 
 func (w *Worker) nextKeepAliveInterval() time.Duration {
@@ -283,10 +295,69 @@ func (w *Worker) nextKeepAliveInterval() time.Duration {
 	return base + time.Duration(w.rng.Int63n(int64(jitter)))
 }
 
+func (w *Worker) nextKeepAliveDelay() time.Duration {
+	if w.consecutiveFailures > 0 {
+		return w.nextKeepAliveBackoff()
+	}
+	return w.nextKeepAliveInterval()
+}
+
+func (w *Worker) nextKeepAliveBackoff() time.Duration {
+	base := w.config.KeepAliveBackoffBase
+	if base <= 0 {
+		base = defaultKeepAliveBackoff
+	}
+	maxBackoff := w.config.KeepAliveBackoffMax
+	if maxBackoff <= 0 {
+		maxBackoff = defaultKeepAliveMaxBack
+	}
+	backoff := base
+	for i := 1; i < w.consecutiveFailures; i++ {
+		if backoff >= maxBackoff/2 {
+			backoff = maxBackoff
+			break
+		}
+		backoff *= 2
+	}
+	if backoff > maxBackoff {
+		backoff = maxBackoff
+	}
+	if backoff <= 0 {
+		return 0
+	}
+	return time.Duration(w.rng.Int63n(int64(backoff) + 1))
+}
+
 func (w *Worker) incrementFailure() {
 	w.consecutiveFailures++
 	w.LastFailure = time.Now()
 	w.NextAttempt = w.LastFailure.Add(w.config.SubscribeRetryBackoff)
+}
+
+func (w *Worker) resetSubscription(client *clientpkg.Client) error {
+	w.logger.Printf("event=keepalive_resubscribe camera_label=%s camera_ip=%s attempts=%d", w.camera.Label, w.cameraHost(), w.consecutiveFailures)
+	if w.SubID != "" {
+		w.unsubscribe(client)
+	}
+	if err := w.subscribe(client); err != nil {
+		return fmt.Errorf("keepalive resubscribe: %w", err)
+	}
+	w.consecutiveFailures = 0
+	return nil
+}
+
+func (w *Worker) cameraHost() string {
+	if w.camera.BaseURL == "" {
+		return ""
+	}
+	parsed, err := url.Parse(w.camera.BaseURL)
+	if err != nil {
+		return w.camera.BaseURL
+	}
+	if parsed.Hostname() != "" {
+		return parsed.Hostname()
+	}
+	return parsed.Host
 }
 
 func getenvInt(key string, fallback int) int {
@@ -299,6 +370,20 @@ func getenvInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+func getenvIntFromKeys(keys []string, fallback int) int {
+	for _, key := range keys {
+		value := strings.TrimSpace(os.Getenv(key))
+		if value == "" {
+			continue
+		}
+		parsed, err := strconv.Atoi(value)
+		if err == nil {
+			return parsed
+		}
+	}
+	return fallback
 }
 
 func getenvDuration(key string, fallback time.Duration) time.Duration {
