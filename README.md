@@ -101,6 +101,61 @@ Veja `examples/subscribe_payload_template.json` e `examples/keepalive_payload_te
 
 ## Como rodar
 
+### Passo a passo (daemon com múltiplas câmeras)
+
+1) **Preparar `examples/cameras.csv` com 5 câmeras válidas**
+
+```bash
+cat > examples/cameras.csv <<'CSV'
+192.168.1.10,80,admin,secret,uniview
+192.168.1.11,80,admin,secret,uniview
+192.168.1.12,80,admin,secret,uniview
+192.168.1.13,80,admin,secret,uniview
+192.168.1.14,80,admin,secret,uniview
+CSV
+```
+
+2) **Definir env vars obrigatórias**
+
+```bash
+export CAMERA_CSV_FILE=examples/cameras.csv
+export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
+export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+export RECEIVER_HOST=192.168.1.100
+export RECEIVER_PORT=8080
+export TYPE_MASK=97663
+export DURATION=60
+export IMAGE_PUSH_MODE=0
+```
+
+> ⚠️ **Importante**: o servidor deve estar acessível pela câmera usando o `RECEIVER_HOST` informado. Não use `0.0.0.0` como callback; informe o IP/host que a câmera consegue alcançar.
+
+3) **Configurar encaminhamento para o servidor de analytics**
+
+Use **uma** das opções abaixo:
+
+```bash
+export FORWARD_URL=http://analytics.local:9000/webhooks/uniview
+```
+
+ou
+
+```bash
+export FORWARD_HOST=analytics.local
+export FORWARD_PORT=9000
+export FORWARD_PATH=/webhooks/uniview
+```
+
+4) **Executar**
+
+```bash
+./univiewd run
+```
+
+5) **Verificar no servidor externo o recebimento das notificações**
+
+O receiver normaliza e encaminha os eventos com os campos `tag`, `categoria`, `camera_ip`, `ivs_type`, `message`. Confirme no servidor externo que esses campos chegam conforme esperado.
+
 ## Supervisor / Workers
 
 O comando `run` inicia um supervisor que cria **um worker por câmera**. Cada worker roda em loop contínuo de **subscribe → keepalive → resubscribe**, tentando manter a subscription ativa enquanto o processo estiver vivo.
