@@ -45,8 +45,8 @@ type Config struct {
 }
 
 type PayloadProvider interface {
-	SubscribePayload() ([]byte, error)
-	KeepAlivePayload() ([]byte, error)
+	SubscribePayload(camera CameraConfig) ([]byte, error)
+	KeepAlivePayload(camera CameraConfig) ([]byte, error)
 }
 
 type Supervisor struct {
@@ -204,7 +204,7 @@ func (w *Worker) Run() error {
 }
 
 func (w *Worker) subscribe(client *clientpkg.Client) error {
-	payload, err := w.payloads.SubscribePayload()
+	payload, err := w.payloads.SubscribePayload(w.camera)
 	if err != nil {
 		return fmt.Errorf("subscribe payload: %w", err)
 	}
@@ -235,7 +235,7 @@ func (w *Worker) keepAliveLoop(client *clientpkg.Client) error {
 		case <-timer.C:
 		}
 
-		payload, err := w.payloads.KeepAlivePayload()
+		payload, err := w.payloads.KeepAlivePayload(w.camera)
 		if err != nil {
 			w.incrementFailure()
 			w.logger.Printf("event=keepalive_payload_error camera_label=%s camera_ip=%s attempts=%d error=%v", w.camera.Label, w.cameraHost(), w.consecutiveFailures, err)
