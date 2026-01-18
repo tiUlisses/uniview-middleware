@@ -1,9 +1,13 @@
 package main
 
 import (
+	"bytes"
 	"context"
+	"encoding/json"
 	"fmt"
+	"io"
 	"log"
+	"net/http"
 	"os"
 	"os/signal"
 	"strconv"
@@ -48,10 +52,18 @@ func runServe(logger *log.Logger) {
 	port := getenvInt("RECEIVER_PORT", 8080)
 
 	logger.Printf("starting receiver on %s:%d", host, port)
-	receiver, err := receiver.New(host, port, receiver.HandlerFunc(func(ctx context.Context, event receiver.Event) error {
+	handler := receiver.HandlerFunc(func(ctx context.Context, event receiver.Event) error {
 		logger.Printf("event received path=%s alarm=%s bytes=%d", event.Path, event.AlarmType, len(event.Raw))
 		return nil
-	}), logger)
+	})
+	forwardHandler, err := newForwardingHandler(logger)
+	if err != nil {
+		logger.Printf("forwarding disabled: %v", err)
+	} else {
+		handler = forwardHandler
+	}
+
+	receiver, err := receiver.New(host, port, handler, logger)
 	if err != nil {
 		logger.Fatalf("receiver init: %v", err)
 	}
@@ -133,10 +145,18 @@ func runDaemon(logger *log.Logger) {
 	host := getenv("RECEIVER_HOST", "0.0.0.0")
 	port := getenvInt("RECEIVER_PORT", 8080)
 
-	receiverSrv, err := receiver.New(host, port, receiver.HandlerFunc(func(ctx context.Context, event receiver.Event) error {
+	handler := receiver.HandlerFunc(func(ctx context.Context, event receiver.Event) error {
 		logger.Printf("event received path=%s alarm=%s bytes=%d", event.Path, event.AlarmType, len(event.Raw))
 		return nil
-	}), logger)
+	})
+	forwardHandler, err := newForwardingHandler(logger)
+	if err != nil {
+		logger.Printf("forwarding disabled: %v", err)
+	} else {
+		handler = forwardHandler
+	}
+
+	receiverSrv, err := receiver.New(host, port, handler, logger)
 	if err != nil {
 		logger.Fatalf("receiver init: %v", err)
 	}
@@ -297,4 +317,51 @@ func getenvInt(key string, fallback int) int {
 		return fallback
 	}
 	return parsed
+}
+
+type forwardPayload struct {
+	Path       string          `json:"path"`
+	AlarmType  string          `json:"alarm_type"`
+	ReceivedAt string          `json:"received_at"`
+	Headers    http.Header     `json:"headers"`
+	Event      json.RawMessage `json:"event"`
+}
+
+func newForwardingHandler(logger *log.Logger) (receiver.HandlerFunc, error) {
+	forwardURL, err := receiver.ForwardURLFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	client := &http.Client{Timeout: 10 * time.Second}
+	return func(ctx context.Context, event receiver.Event) error {
+		logger.Printf("event received path=%s alarm=%s bytes=%d", event.Path, event.AlarmType, len(event.Raw))
+		payload := forwardPayload{
+			Path:       event.Path,
+			AlarmType:  event.AlarmType,
+			ReceivedAt: event.ReceivedAt.Format(time.RFC3339Nano),
+			Headers:    event.Headers,
+			Event:      json.RawMessage(event.Raw),
+		}
+		body, err := json.Marshal(payload)
+		if err != nil {
+			return fmt.Errorf("marshal forward payload: %w", err)
+		}
+		req, err := http.NewRequestWithContext(ctx, http.MethodPost, forwardURL, bytes.NewReader(body))
+		if err != nil {
+			return fmt.Errorf("create forward request: %w", err)
+		}
+		req.Header.Set("Content-Type", "application/json")
+		resp, err := client.Do(req)
+		if err != nil {
+			return fmt.Errorf("forward event: %w", err)
+		}
+		defer resp.Body.Close()
+		if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+			logger.Printf("forward response read error: %v", err)
+		}
+		if resp.StatusCode >= http.StatusMultipleChoices {
+			return fmt.Errorf("forward event status=%d", resp.StatusCode)
+		}
+		return nil
+	}, nil
 }
