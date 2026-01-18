@@ -1,0 +1,7 @@
+{
+  "AlarmType": "Motion",
+  "EventData": {
+    "ChannelID": 1,
+    "Timestamp": "2026-01-18T13:55:00Z"
+  }
+}
