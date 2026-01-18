@@ -319,29 +319,24 @@ func getenvInt(key string, fallback int) int {
 	return parsed
 }
 
-type forwardPayload struct {
-	Path       string          `json:"path"`
-	AlarmType  string          `json:"alarm_type"`
-	ReceivedAt string          `json:"received_at"`
-	Headers    http.Header     `json:"headers"`
-	Event      json.RawMessage `json:"event"`
-}
-
 func newForwardingHandler(logger *log.Logger) (receiver.HandlerFunc, error) {
 	forwardURL, err := receiver.ForwardURLFromEnv()
 	if err != nil {
 		return nil, err
 	}
+	mappings, err := receiver.LoadAlarmTypeMappingsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	config := receiver.NormalizationConfig{
+		Tag:               receiver.EventTagFromEnv(),
+		Category:          receiver.EventCategoryFromEnv(),
+		AlarmTypeMappings: mappings,
+	}
 	client := &http.Client{Timeout: 10 * time.Second}
 	return func(ctx context.Context, event receiver.Event) error {
-		logger.Printf("event received path=%s alarm=%s bytes=%d", event.Path, event.AlarmType, len(event.Raw))
-		payload := forwardPayload{
-			Path:       event.Path,
-			AlarmType:  event.AlarmType,
-			ReceivedAt: event.ReceivedAt.Format(time.RFC3339Nano),
-			Headers:    event.Headers,
-			Event:      json.RawMessage(event.Raw),
-		}
+		logger.Printf("event received path=%s alarm=%s camera_ip=%s bytes=%d", event.Path, event.AlarmType, event.CameraIP, len(event.Raw))
+		payload := receiver.BuildNormalizedPayload(event, config)
 		body, err := json.Marshal(payload)
 		if err != nil {
 			return fmt.Errorf("marshal forward payload: %w", err)

@@ -20,8 +20,10 @@ import (
 )
 
 const (
-	defaultReadTimeout  = 10 * time.Second
-	defaultWriteTimeout = 10 * time.Second
+	defaultReadTimeout   = 10 * time.Second
+	defaultWriteTimeout  = 10 * time.Second
+	defaultEventTag      = "uniview"
+	defaultEventCategory = "event"
 )
 
 var (
@@ -43,22 +45,28 @@ func (f HandlerFunc) HandleEvent(ctx context.Context, event Event) error {
 	return f(ctx, event)
 }
 
-// ForwardingHandler posts the raw event payload to a configured endpoint.
+// ForwardingHandler posts normalized event payloads to a configured endpoint.
 type ForwardingHandler struct {
 	client *http.Client
 	url    string
 	logger *log.Logger
+	config NormalizationConfig
 }
 
 // NewForwardingHandler builds a forwarding handler for the given URL.
 func NewForwardingHandler(url string, client *http.Client, logger *log.Logger) *ForwardingHandler {
+	return NewForwardingHandlerWithConfig(url, client, logger, NormalizationConfig{})
+}
+
+// NewForwardingHandlerWithConfig builds a forwarding handler with normalization settings.
+func NewForwardingHandlerWithConfig(url string, client *http.Client, logger *log.Logger, config NormalizationConfig) *ForwardingHandler {
 	if client == nil {
 		client = &http.Client{Timeout: 10 * time.Second}
 	}
 	if logger == nil {
 		logger = log.Default()
 	}
-	return &ForwardingHandler{client: client, url: url, logger: logger}
+	return &ForwardingHandler{client: client, url: url, logger: logger, config: config}
 }
 
 // NewEnvForwardingHandler builds a forwarding handler using env-configured settings.
@@ -67,7 +75,16 @@ func NewEnvForwardingHandler(logger *log.Logger) (EventHandler, error) {
 	if err != nil {
 		return nil, err
 	}
-	return NewForwardingHandler(forwardURL, nil, logger), nil
+	mappings, err := LoadAlarmTypeMappingsFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	config := NormalizationConfig{
+		Tag:               EventTagFromEnv(),
+		Category:          EventCategoryFromEnv(),
+		AlarmTypeMappings: mappings,
+	}
+	return NewForwardingHandlerWithConfig(forwardURL, nil, logger, config), nil
 }
 
 // ForwardURLFromEnv resolves the forwarding URL from environment variables.
@@ -119,7 +136,12 @@ func (h *ForwardingHandler) HandleEvent(ctx context.Context, event Event) error 
 	if contentType == "" {
 		contentType = "application/json"
 	}
-	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(event.Raw))
+	payload := BuildNormalizedPayload(event, h.config)
+	body, err := json.Marshal(payload)
+	if err != nil {
+		return fmt.Errorf("marshal normalized payload: %w", err)
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(body))
 	if err != nil {
 		return fmt.Errorf("create forward request: %w", err)
 	}
@@ -145,6 +167,29 @@ type Event struct {
 	Headers    http.Header
 	ReceivedAt time.Time
 	AlarmType  string
+	CameraIP   string
+}
+
+// AlarmTypeMapping defines how to map an AlarmType to ivs_type and message.
+type AlarmTypeMapping struct {
+	IVSType string `json:"ivs_type"`
+	Message string `json:"message"`
+}
+
+// NormalizationConfig controls how normalized payloads are produced.
+type NormalizationConfig struct {
+	Tag               string
+	Category          string
+	AlarmTypeMappings map[string]AlarmTypeMapping
+}
+
+// NormalizedPayload represents the standardized event body.
+type NormalizedPayload struct {
+	Tag       string `json:"tag"`
+	Categoria string `json:"categoria"`
+	CameraIP  string `json:"camera_ip"`
+	IVSType   string `json:"ivs_type"`
+	Message   string `json:"message"`
 }
 
 // Receiver serves HTTP notifications from Uniview cameras.
@@ -227,6 +272,7 @@ func (r *Receiver) handleNotification(w http.ResponseWriter, req *http.Request) 
 		Headers:    req.Header.Clone(),
 		ReceivedAt: time.Now(),
 		AlarmType:  extractAlarmType(body),
+		CameraIP:   extractCameraIP(req),
 	}
 
 	if err := r.handler.HandleEvent(req.Context(), event); err != nil {
@@ -274,4 +320,116 @@ func extractAlarmType(body []byte) string {
 		}
 	}
 	return ""
+}
+
+// BuildNormalizedPayload creates a normalized payload for downstream consumers.
+func BuildNormalizedPayload(event Event, config NormalizationConfig) NormalizedPayload {
+	tag := strings.TrimSpace(config.Tag)
+	if tag == "" {
+		tag = defaultEventTag
+	}
+	category := strings.TrimSpace(config.Category)
+	if category == "" {
+		category = defaultEventCategory
+	}
+
+	ivsType, message := resolveMapping(event.AlarmType, config.AlarmTypeMappings)
+	if ivsType == "" {
+		ivsType = event.AlarmType
+	}
+	if message == "" {
+		message = event.AlarmType
+	}
+
+	return NormalizedPayload{
+		Tag:       tag,
+		Categoria: category,
+		CameraIP:  event.CameraIP,
+		IVSType:   ivsType,
+		Message:   message,
+	}
+}
+
+// EventTagFromEnv returns the event tag configured via environment.
+func EventTagFromEnv() string {
+	if value := strings.TrimSpace(os.Getenv("EVENT_TAG")); value != "" {
+		return value
+	}
+	return defaultEventTag
+}
+
+// EventCategoryFromEnv returns the event category configured via environment.
+func EventCategoryFromEnv() string {
+	if value := strings.TrimSpace(os.Getenv("EVENT_CATEGORY")); value != "" {
+		return value
+	}
+	return defaultEventCategory
+}
+
+// LoadAlarmTypeMappingsFromEnv loads AlarmType mappings from env or JSON file.
+func LoadAlarmTypeMappingsFromEnv() (map[string]AlarmTypeMapping, error) {
+	if path := strings.TrimSpace(os.Getenv("ALARM_TYPE_MAPPING_FILE")); path != "" {
+		data, err := os.ReadFile(path)
+		if err != nil {
+			return nil, fmt.Errorf("read alarm type mapping file: %w", err)
+		}
+		return parseAlarmTypeMappings(data)
+	}
+	if value := strings.TrimSpace(os.Getenv("ALARM_TYPE_MAPPING_JSON")); value != "" {
+		return parseAlarmTypeMappings([]byte(value))
+	}
+	return map[string]AlarmTypeMapping{}, nil
+}
+
+func parseAlarmTypeMappings(data []byte) (map[string]AlarmTypeMapping, error) {
+	var mappings map[string]AlarmTypeMapping
+	if err := json.Unmarshal(data, &mappings); err != nil {
+		return nil, fmt.Errorf("parse alarm type mappings: %w", err)
+	}
+	normalized := make(map[string]AlarmTypeMapping, len(mappings))
+	for key, value := range mappings {
+		normalized[strings.ToLower(strings.TrimSpace(key))] = value
+	}
+	return normalized, nil
+}
+
+func resolveMapping(alarmType string, mappings map[string]AlarmTypeMapping) (string, string) {
+	if alarmType == "" || len(mappings) == 0 {
+		return "", ""
+	}
+	normalized := strings.ToLower(strings.TrimSpace(alarmType))
+	if mapping, ok := mappings[normalized]; ok {
+		return mapping.IVSType, mapping.Message
+	}
+	for key, mapping := range mappings {
+		if strings.EqualFold(key, alarmType) {
+			return mapping.IVSType, mapping.Message
+		}
+	}
+	return "", ""
+}
+
+func extractCameraIP(req *http.Request) string {
+	if req == nil {
+		return ""
+	}
+	if value := strings.TrimSpace(req.Header.Get("X-Forwarded-For")); value != "" {
+		parts := strings.Split(value, ",")
+		if len(parts) > 0 {
+			if candidate := strings.TrimSpace(parts[0]); candidate != "" {
+				return candidate
+			}
+		}
+	}
+	if value := strings.TrimSpace(req.Header.Get("X-Real-IP")); value != "" {
+		return value
+	}
+	if req.RemoteAddr == "" {
+		return ""
+	}
+	host, _, err := net.SplitHostPort(req.RemoteAddr)
+	if err == nil {
+		return host
+	}
+	return req.RemoteAddr
 }
