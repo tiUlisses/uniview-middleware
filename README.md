@@ -149,14 +149,24 @@ export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
 ### 4) Rodar tudo em modo daemon
 
 ```bash
+export CAMERA_CSV_FILE=examples/cameras.csv
 export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
 export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+export RECEIVER_HOST=192.168.1.100
+export RECEIVER_PORT=8080
+export DURATION=60
+export TYPE_MASK=97663
+export IMAGE_PUSH_MODE=0
 export FORWARD_HOST=localhost
 export FORWARD_PORT=9000
 export FORWARD_PATH=/webhooks/uniview
+# ou, alternativamente:
+# export FORWARD_URL=http://localhost:9000/webhooks/uniview
 
 ./univiewd run
 ```
+
+> Observação: o callback URL final será `http://RECEIVER_HOST:RECEIVER_PORT/LAPI/V1.0/System/Event/Notification`.
 
 ## Exemplos de payloads e eventos
 
