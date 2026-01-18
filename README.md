@@ -166,6 +166,23 @@ Suporte a CSV com formato:
 - Se `modelo` estiver vazio, assume `uniview`.
 - Exemplo em `examples/cameras.csv`.
 
+Para rodar o daemon com múltiplas câmeras, defina `CAMERA_CSV_FILE` com o caminho do CSV.
+Quando definido, o comando `run` ignora `UNV_BASE_URL`, `UNV_USER` e `UNV_PASS` e abre
+uma subscription/keepalive por câmera (cada linha do CSV cria um client próprio).
+
+Exemplo:
+
+```bash
+export CAMERA_CSV_FILE=examples/cameras.csv
+export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
+export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+export FORWARD_HOST=localhost
+export FORWARD_PORT=9000
+export FORWARD_PATH=/webhooks/uniview
+
+./univiewd run
+```
+
 ## Observabilidade
 
 - Logs com ciclo subscribe/keepalive e recebimento de eventos.

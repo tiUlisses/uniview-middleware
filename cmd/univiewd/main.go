@@ -141,7 +141,6 @@ func runUnsubscribe(logger *log.Logger) {
 
 func runDaemon(logger *log.Logger) {
 	cfg := loadConfig()
-	cl := mustClient(cfg, logger)
 	host := getenv("RECEIVER_HOST", "0.0.0.0")
 	port := getenvInt("RECEIVER_PORT", 8080)
 
@@ -170,43 +169,15 @@ func runDaemon(logger *log.Logger) {
 		}
 	}()
 
-	subscribePayload, err := loadPayload(cfg, "SUBSCRIBE_PAYLOAD", "SUBSCRIBE_PAYLOAD_FILE")
+	cameraConfigs, err := loadCameraConfigs(cfg)
 	if err != nil {
-		logger.Fatalf("subscribe payload: %v", err)
+		logger.Fatalf("camera config: %v", err)
 	}
-	subCtx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-	subID, resp, err := cl.Subscribe(subCtx, clientpkg.SubscribeRequest{Payload: subscribePayload})
-	cancel()
-	if err != nil {
-		logger.Fatalf("subscribe failed: %v", err)
+	logger.Printf("starting subscriptions for %d camera(s)", len(cameraConfigs))
+	for _, cam := range cameraConfigs {
+		cam := cam
+		go runCameraDaemon(ctx, logger, cfg, cam)
 	}
-	logger.Printf("subscription created id=%s status=%d", subID, resp.StatusCode)
-
-	ticker := time.NewTicker(cfg.KeepAliveInterval())
-	defer ticker.Stop()
-
-	go func() {
-		for {
-			select {
-			case <-ticker.C:
-				payload, err := loadPayload(cfg, "KEEPALIVE_PAYLOAD", "KEEPALIVE_PAYLOAD_FILE")
-				if err != nil {
-					logger.Printf("keepalive payload error: %v", err)
-					continue
-				}
-				ctx, cancel := context.WithTimeout(context.Background(), 10*time.Second)
-				_, err = cl.KeepAlive(ctx, subID, clientpkg.KeepAliveRequest{Payload: payload})
-				cancel()
-				if err != nil {
-					logger.Printf("keepalive failed: %v", err)
-				} else {
-					logger.Printf("keepalive ok")
-				}
-			case <-ctx.Done():
-				return
-			}
-		}
-	}()
 
 	<-ctx.Done()
 	shutdownCtx, cancel := context.WithTimeout(context.Background(), 5*time.Second)
@@ -214,6 +185,14 @@ func runDaemon(logger *log.Logger) {
 	if err := receiverSrv.Shutdown(shutdownCtx); err != nil {
 		logger.Printf("receiver shutdown error: %v", err)
 	}
+}
+
+type cameraConfig struct {
+	BaseURL string
+	User    string
+	Pass    string
+	Label   string
+	Model   string
 }
 
 type config struct {
@@ -359,4 +338,95 @@ func newForwardingHandler(logger *log.Logger) (receiver.HandlerFunc, error) {
 		}
 		return nil
 	}, nil
+}
+
+func loadCameraConfigs(cfg config) ([]cameraConfig, error) {
+	csvPath := getenv("CAMERA_CSV_FILE", "")
+	if csvPath == "" {
+		if cfg.BaseURL == "" || cfg.User == "" || cfg.Pass == "" {
+			return nil, fmt.Errorf("UNV_BASE_URL, UNV_USER, and UNV_PASS are required")
+		}
+		return []cameraConfig{{
+			BaseURL: cfg.BaseURL,
+			User:    cfg.User,
+			Pass:    cfg.Pass,
+			Label:   cfg.BaseURL,
+			Model:   "uniview",
+		}}, nil
+	}
+
+	file, err := os.Open(csvPath)
+	if err != nil {
+		return nil, fmt.Errorf("open CAMERA_CSV_FILE: %w", err)
+	}
+	defer file.Close()
+	entries, err := clientpkg.ParseCameraCSV(file)
+	if err != nil {
+		return nil, fmt.Errorf("parse CAMERA_CSV_FILE: %w", err)
+	}
+	if len(entries) == 0 {
+		return nil, fmt.Errorf("CAMERA_CSV_FILE is empty")
+	}
+	cameras := make([]cameraConfig, 0, len(entries))
+	for _, entry := range entries {
+		if entry.IP == "" || entry.Port == "" || entry.User == "" || entry.Password == "" {
+			return nil, fmt.Errorf("invalid camera entry: ip, port, user, and password are required")
+		}
+		baseURL := fmt.Sprintf("http://%s:%s", entry.IP, entry.Port)
+		label := fmt.Sprintf("%s:%s", entry.IP, entry.Port)
+		cameras = append(cameras, cameraConfig{
+			BaseURL: baseURL,
+			User:    entry.User,
+			Pass:    entry.Password,
+			Label:   label,
+			Model:   entry.Model,
+		})
+	}
+	return cameras, nil
+}
+
+func runCameraDaemon(ctx context.Context, logger *log.Logger, cfg config, cam cameraConfig) {
+	client, err := clientpkg.NewClient(cam.BaseURL, cam.User, cam.Pass, nil)
+	if err != nil {
+		logger.Printf("camera %s client init: %v", cam.Label, err)
+		return
+	}
+	subscribePayload, err := loadPayload(cfg, "SUBSCRIBE_PAYLOAD", "SUBSCRIBE_PAYLOAD_FILE")
+	if err != nil {
+		logger.Printf("camera %s subscribe payload: %v", cam.Label, err)
+		return
+	}
+
+	subCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+	subID, resp, err := client.Subscribe(subCtx, clientpkg.SubscribeRequest{Payload: subscribePayload})
+	cancel()
+	if err != nil {
+		logger.Printf("camera %s subscribe failed: %v", cam.Label, err)
+		return
+	}
+	logger.Printf("camera %s subscription created id=%s status=%d model=%s", cam.Label, subID, resp.StatusCode, cam.Model)
+
+	ticker := time.NewTicker(cfg.KeepAliveInterval())
+	defer ticker.Stop()
+
+	for {
+		select {
+		case <-ticker.C:
+			payload, err := loadPayload(cfg, "KEEPALIVE_PAYLOAD", "KEEPALIVE_PAYLOAD_FILE")
+			if err != nil {
+				logger.Printf("camera %s keepalive payload error: %v", cam.Label, err)
+				continue
+			}
+			kaCtx, cancel := context.WithTimeout(ctx, 10*time.Second)
+			_, err = client.KeepAlive(kaCtx, subID, clientpkg.KeepAliveRequest{Payload: payload})
+			cancel()
+			if err != nil {
+				logger.Printf("camera %s keepalive failed: %v", cam.Label, err)
+			} else {
+				logger.Printf("camera %s keepalive ok", cam.Label)
+			}
+		case <-ctx.Done():
+			return
+		}
+	}
 }
