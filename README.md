@@ -206,7 +206,7 @@ Suporte a CSV com formato:
 ```
 
 - Se `modelo` estiver vazio, assume `uniview`.
-- Exemplo em `examples/cameras.csv`.
+- Exemplo em `examples/cameras.csv` com 5 entradas; cada linha gera um worker próprio.
 
 Para rodar o daemon com múltiplas câmeras, defina `CAMERA_CSV_FILE` com o caminho do CSV.
 Quando definido, o comando `run` ignora `UNV_BASE_URL`, `UNV_USER` e `UNV_PASS` e abre
