@@ -10,13 +10,13 @@ import (
 	"net/http"
 	"os"
 	"os/signal"
-	"strconv"
 	"strings"
 	"syscall"
 	"time"
 
 	clientpkg "uniview-middleware/pkg/uniview/client"
 	configpkg "uniview-middleware/pkg/uniview/config"
+	payloadpkg "uniview-middleware/pkg/uniview/payloads"
 	"uniview-middleware/pkg/uniview/receiver"
 	"uniview-middleware/pkg/uniview/supervisor"
 )
@@ -93,7 +93,7 @@ func runServe(logger *log.Logger) {
 func runSubscribe(logger *log.Logger) {
 	cfg := loadConfig()
 	cl := mustClient(cfg, logger)
-	payload, err := loadPayload(cfg, "SUBSCRIBE_PAYLOAD", "SUBSCRIBE_PAYLOAD_FILE")
+	payload, err := buildSubscribePayload(cfg)
 	if err != nil {
 		logger.Fatalf("subscribe payload: %v", err)
 	}
@@ -114,7 +114,7 @@ func runKeepAlive(logger *log.Logger) {
 	if subID == "" {
 		logger.Fatalf("SUBSCRIPTION_ID is required")
 	}
-	payload, err := loadPayload(cfg, "KEEPALIVE_PAYLOAD", "KEEPALIVE_PAYLOAD_FILE")
+	payload, err := buildKeepAlivePayload(cfg, subID)
 	if err != nil {
 		logger.Fatalf("keepalive payload: %v", err)
 	}
@@ -148,6 +148,12 @@ func runDaemon(logger *log.Logger) {
 	cfg := loadConfig()
 	host := getenv("RECEIVER_HOST", "0.0.0.0")
 	port := getenvInt("RECEIVER_PORT", 8080)
+	if _, err := buildSubscribePayload(cfg); err != nil {
+		logger.Fatalf("subscribe payload: %v", err)
+	}
+	if _, err := buildKeepAlivePayload(cfg, ""); err != nil {
+		logger.Fatalf("keepalive payload: %v", err)
+	}
 
 	handler := receiver.HandlerFunc(func(ctx context.Context, event receiver.Event) error {
 		logger.Printf("event received path=%s alarm=%s bytes=%d", event.Path, event.AlarmType, len(event.Raw))
@@ -198,11 +204,11 @@ type payloadProvider struct {
 }
 
 func (p payloadProvider) SubscribePayload() ([]byte, error) {
-	return loadPayload(p.cfg, "SUBSCRIBE_PAYLOAD", "SUBSCRIBE_PAYLOAD_FILE")
+	return buildSubscribePayload(p.cfg)
 }
 
 func (p payloadProvider) KeepAlivePayload() ([]byte, error) {
-	return loadPayload(p.cfg, "KEEPALIVE_PAYLOAD", "KEEPALIVE_PAYLOAD_FILE")
+	return buildKeepAlivePayload(p.cfg, "")
 }
 
 type config struct {
@@ -233,6 +239,16 @@ func (c config) CallbackURL() string {
 	return fmt.Sprintf("http://%s:%d/LAPI/V1.0/System/Event/Notification", c.ReceiverHost, c.ReceiverPort)
 }
 
+func (c config) PayloadConfig(subscriptionID string) payloadpkg.Config {
+	return payloadpkg.Config{
+		CallbackURL:    c.CallbackURL(),
+		Duration:       c.Duration,
+		TypeMask:       c.TypeMask,
+		ImagePushMode:  c.ImagePushMode,
+		SubscriptionID: subscriptionID,
+	}
+}
+
 func (c config) KeepAliveInterval() time.Duration {
 	if c.Duration <= 0 {
 		return 30 * time.Second
@@ -255,38 +271,12 @@ func printUsage() {
 	fmt.Println("Usage: univiewd <serve|subscribe|keepalive|unsubscribe|run>")
 }
 
-func loadPayload(cfg config, envKey, fileKey string) ([]byte, error) {
-	value := os.Getenv(envKey)
-	if value == "" {
-		filePath := os.Getenv(fileKey)
-		if filePath != "" {
-			data, err := os.ReadFile(filePath)
-			if err != nil {
-				return nil, fmt.Errorf("read %s: %w", fileKey, err)
-			}
-			value = string(data)
-		}
-	}
-	if value == "" {
-		return nil, fmt.Errorf("missing payload: set %s or %s", envKey, fileKey)
-	}
-	rendered := renderTemplate(value, cfg)
-	return []byte(rendered), nil
+func buildSubscribePayload(cfg config) ([]byte, error) {
+	return payloadpkg.BuildSubscribePayload(cfg.PayloadConfig(""))
 }
 
-func renderTemplate(template string, cfg config) string {
-	replacements := map[string]string{
-		"{{CALLBACK_URL}}":    cfg.CallbackURL(),
-		"{{DURATION}}":        strconv.Itoa(cfg.Duration),
-		"{{TYPE_MASK}}":       strconv.Itoa(cfg.TypeMask),
-		"{{IMAGE_PUSH_MODE}}": strconv.Itoa(cfg.ImagePushMode),
-		"{{SUBSCRIPTION_ID}}": os.Getenv("SUBSCRIPTION_ID"),
-	}
-	output := template
-	for key, value := range replacements {
-		output = strings.ReplaceAll(output, key, value)
-	}
-	return output
+func buildKeepAlivePayload(cfg config, subscriptionID string) ([]byte, error) {
+	return payloadpkg.BuildKeepAlivePayload(cfg.PayloadConfig(subscriptionID))
 }
 
 func getenv(key, fallback string) string {
