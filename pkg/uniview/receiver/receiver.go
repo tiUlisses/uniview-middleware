@@ -1,6 +1,7 @@
 package receiver
 
 import (
+	"bytes"
 	"context"
 	"encoding/json"
 	"errors"
@@ -10,6 +11,9 @@ import (
 	"log"
 	"net"
 	"net/http"
+	"net/url"
+	"os"
+	"strconv"
 	"strings"
 	"sync"
 	"time"
@@ -37,6 +41,101 @@ type HandlerFunc func(ctx context.Context, event Event) error
 
 func (f HandlerFunc) HandleEvent(ctx context.Context, event Event) error {
 	return f(ctx, event)
+}
+
+// ForwardingHandler posts the raw event payload to a configured endpoint.
+type ForwardingHandler struct {
+	client *http.Client
+	url    string
+	logger *log.Logger
+}
+
+// NewForwardingHandler builds a forwarding handler for the given URL.
+func NewForwardingHandler(url string, client *http.Client, logger *log.Logger) *ForwardingHandler {
+	if client == nil {
+		client = &http.Client{Timeout: 10 * time.Second}
+	}
+	if logger == nil {
+		logger = log.Default()
+	}
+	return &ForwardingHandler{client: client, url: url, logger: logger}
+}
+
+// NewEnvForwardingHandler builds a forwarding handler using env-configured settings.
+func NewEnvForwardingHandler(logger *log.Logger) (EventHandler, error) {
+	forwardURL, err := ForwardURLFromEnv()
+	if err != nil {
+		return nil, err
+	}
+	return NewForwardingHandler(forwardURL, nil, logger), nil
+}
+
+// ForwardURLFromEnv resolves the forwarding URL from environment variables.
+func ForwardURLFromEnv() (string, error) {
+	if value := strings.TrimSpace(os.Getenv("FORWARD_URL")); value != "" {
+		return value, nil
+	}
+
+	host := strings.TrimSpace(os.Getenv("FORWARD_HOST"))
+	if host == "" {
+		return "", errors.New("missing FORWARD_URL or FORWARD_HOST")
+	}
+	scheme := strings.TrimSpace(os.Getenv("FORWARD_SCHEME"))
+	if scheme == "" {
+		scheme = "http"
+	}
+	path := strings.TrimSpace(os.Getenv("FORWARD_PATH"))
+	if path == "" {
+		path = "/"
+	}
+	if !strings.HasPrefix(path, "/") {
+		path = "/" + path
+	}
+
+	if port := strings.TrimSpace(os.Getenv("FORWARD_PORT")); port != "" {
+		if _, err := strconv.Atoi(port); err != nil {
+			return "", fmt.Errorf("invalid FORWARD_PORT: %w", err)
+		}
+		host = net.JoinHostPort(host, port)
+	}
+
+	forwardURL := url.URL{
+		Scheme: scheme,
+		Host:   host,
+		Path:   path,
+	}
+	return forwardURL.String(), nil
+}
+
+// HandleEvent forwards the event payload to the configured endpoint.
+func (h *ForwardingHandler) HandleEvent(ctx context.Context, event Event) error {
+	if h == nil {
+		return errors.New("forwarding handler is nil")
+	}
+	if h.url == "" {
+		return errors.New("forwarding URL is empty")
+	}
+	contentType := event.Headers.Get("Content-Type")
+	if contentType == "" {
+		contentType = "application/json"
+	}
+	req, err := http.NewRequestWithContext(ctx, http.MethodPost, h.url, bytes.NewReader(event.Raw))
+	if err != nil {
+		return fmt.Errorf("create forward request: %w", err)
+	}
+	req.Header.Set("Content-Type", contentType)
+	resp, err := h.client.Do(req)
+	if err != nil {
+		return fmt.Errorf("forward event: %w", err)
+	}
+	defer resp.Body.Close()
+	if _, err := io.Copy(io.Discard, resp.Body); err != nil {
+		h.logger.Printf("forward response read error: %v", err)
+	}
+	if resp.StatusCode >= http.StatusMultipleChoices {
+		return fmt.Errorf("forward event status=%d", resp.StatusCode)
+	}
+	return nil
 }
 
 // Event represents a notification payload.

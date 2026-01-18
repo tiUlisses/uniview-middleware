@@ -39,6 +39,16 @@ examples/                  # Payloads de exemplo + CSV
 - `RECEIVER_HOST`: host do listener (default `0.0.0.0`)
 - `RECEIVER_PORT`: porta do listener (default `8080`)
 
+### Forwarding (encaminhar eventos recebidos)
+
+- `FORWARD_URL`: URL completa para POST (ex.: `http://localhost:9000/webhooks/uniview`)
+- `FORWARD_SCHEME`: esquema (default `http`)
+- `FORWARD_HOST`: host do destino (ex.: `localhost` ou `10.0.0.5`)
+- `FORWARD_PORT`: porta do destino (opcional)
+- `FORWARD_PATH`: path do destino (default `/`)
+
+> Use `FORWARD_URL` **ou** `FORWARD_HOST` + `FORWARD_PATH` (com `FORWARD_SCHEME`/`FORWARD_PORT` se necessário).
+
 ### Subscription / keepalive
 
 - `DURATION`: duração da subscription (segundos)
@@ -73,6 +83,13 @@ RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
 
 - Receiver expõe métricas simples em `/debug/vars`.
 
+Exemplo com forwarding:
+
+```bash
+export FORWARD_URL=http://localhost:9000/webhooks/uniview
+RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
+```
+
 ### 2) Criar subscription
 
 ```bash
@@ -103,6 +120,9 @@ export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
 ```bash
 export SUBSCRIBE_PAYLOAD_FILE=examples/subscribe_payload_template.json
 export KEEPALIVE_PAYLOAD_FILE=examples/keepalive_payload_template.json
+export FORWARD_HOST=localhost
+export FORWARD_PORT=9000
+export FORWARD_PATH=/webhooks/uniview
 
 ./univiewd run
 ```
