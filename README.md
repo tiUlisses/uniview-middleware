@@ -50,7 +50,8 @@ Exemplo:
 
 ### Receiver
 
-- `RECEIVER_HOST`: host do listener (default `0.0.0.0`)
+- `RECEIVER_LISTEN_HOST`: host do listener/bind (default `0.0.0.0`)
+- `RECEIVER_CALLBACK_HOST`: host/hostname/IP que a câmera usa para chamar o callback (opcional; se vazio, detecta automaticamente o IP local usado para alcançar a câmera)
 - `RECEIVER_PORT`: porta do listener (default `8080`)
 - `EVENT_TAG`: tag do payload normalizado (default `uniview`)
 - `EVENT_CATEGORY`: categoria do payload normalizado (default `event`)
@@ -78,7 +79,7 @@ O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camer
 - `IMAGE_PUSH_MODE`: modo de push de imagens (se aplicável no PDF)
 - `SUBSCRIPTION_ID`: id para keepalive/unsubscribe (quando necessário)
 
-> ⚠️ **Aviso**: `RECEIVER_HOST` deve ser o IP/host acessível pela câmera (não `0.0.0.0`). Em cenários com NAT, IP público, VPN ou reverse proxy, use o endereço exposto para a câmera alcançar o callback.
+> ⚠️ **Aviso**: `RECEIVER_CALLBACK_HOST` deve ser o IP/host acessível pela câmera (não `0.0.0.0`). Em cenários com NAT, IP público, VPN ou reverse proxy, use o endereço exposto para a câmera alcançar o callback. Se não definir, o serviço tenta detectar automaticamente o IP local usado para alcançar a câmera.
 
 ## Como rodar (guia único)
 
@@ -89,8 +90,10 @@ Fluxo recomendado: **`.env` → CSV → `run`**. O daemon lê o `.env`, carrega 
 Crie/ajuste seu `.env` (ou use `ENV_FILE`) com as variáveis usadas pelo daemon e pelo receiver:
 
 ```dotenv
-# Listener/receiver (callback que a câmera alcança)
-RECEIVER_HOST=192.168.1.100
+# Listener/receiver
+RECEIVER_LISTEN_HOST=0.0.0.0
+# Callback que a câmera alcança (opcional; se vazio, detecta IP local)
+RECEIVER_CALLBACK_HOST=192.168.1.100
 RECEIVER_PORT=8080
 
 # Subscription / keepalive
@@ -104,7 +107,7 @@ ANALYTICS_PORT=9000
 ANALYTICS_PATH=/webhooks/uniview
 ```
 
-> ⚠️ **Importante**: o `RECEIVER_HOST` deve ser acessível pela câmera (não use `0.0.0.0` como callback).
+> ⚠️ **Importante**: o `RECEIVER_CALLBACK_HOST` deve ser acessível pela câmera (não use `0.0.0.0` como callback). Se não definir, o serviço tenta detectar automaticamente o IP local usado para alcançar a câmera.
 
 ### 2) CSV
 
@@ -160,7 +163,7 @@ As variáveis abaixo controlam o comportamento do supervisor/worker. Valores de 
 - `KEEPALIVE_BACKOFF_BASE`: base do backoff em falhas de keepalive (duration). Default: `2s`.
 - `KEEPALIVE_BACKOFF_MAX`: limite máximo do backoff (duration). Default: `30s`.
 
-> Observação: o callback URL final será `http://RECEIVER_HOST:RECEIVER_PORT/LAPI/V1.0/System/Event/Notification`.
+> Observação: o callback URL final será `http://RECEIVER_CALLBACK_HOST:RECEIVER_PORT/LAPI/V1.0/System/Event/Notification` (ou o IP local detectado automaticamente quando `RECEIVER_CALLBACK_HOST` estiver vazio).
 
 ## CSV de câmeras
 
