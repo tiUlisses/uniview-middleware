@@ -28,6 +28,22 @@ examples/                  # Payloads de exemplo + CSV
 
 ## Configuração por variáveis de ambiente
 
+### Carregar .env
+
+O binário **não** carrega o arquivo `.env` automaticamente. É necessário exportar as variáveis antes de rodar.
+
+Exemplos:
+
+```bash
+set -a; source .env; set +a; ./univiewd run
+```
+
+Ou:
+
+```bash
+env $(grep -v '^#' .env | xargs) ./univiewd run
+```
+
 ### Autenticação / conexão
 
 - `UNV_BASE_URL`: base URL da câmera (ex.: `http://192.168.1.10`)
