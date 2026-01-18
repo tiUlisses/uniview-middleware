@@ -32,6 +32,8 @@ examples/                  # Payloads de exemplo + CSV
 
 O binário tenta carregar automaticamente um arquivo `.env` no diretório atual antes de ler as variáveis. Se o arquivo não existir, ele segue normalmente sem erro. Variáveis já definidas no ambiente têm prioridade.
 
+O repositório inclui um `.env.example` com todas as variáveis suportadas e exemplos seguros. Copie para `.env` e ajuste conforme necessário.
+
 Exemplo:
 
 ```bash
