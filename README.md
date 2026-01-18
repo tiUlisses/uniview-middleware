@@ -82,6 +82,8 @@ O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camer
 - `IMAGE_PUSH_MODE`: modo de push de imagens (se aplicável no PDF)
 - `SUBSCRIPTION_ID`: id para keepalive/unsubscribe (quando necessário)
 
+> ⚠️ **Aviso**: `RECEIVER_HOST` deve ser o IP/host acessível pela câmera (não `0.0.0.0`). Em cenários com NAT, IP público, VPN ou reverse proxy, use o endereço exposto para a câmera alcançar o callback.
+
 ### Payloads obrigatórios (não inventamos campos)
 
 Os endpoints exigem payloads JSON **conforme o PDF**. Para evitar inventar campos, o binário usa templates fornecidos pelo operador.
