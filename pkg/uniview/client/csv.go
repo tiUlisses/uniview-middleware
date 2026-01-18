@@ -27,7 +27,15 @@ func ParseCameraCSV(r io.Reader) ([]CameraEntry, error) {
 		return nil, fmt.Errorf("read csv: %w", err)
 	}
 	entries := make([]CameraEntry, 0, len(records))
+	skippedHeader := false
 	for i, record := range records {
+		if isEmptyRecord(record) || isCommentRecord(record) {
+			continue
+		}
+		if !skippedHeader && isHeaderRecord(record) {
+			skippedHeader = true
+			continue
+		}
 		if len(record) < 4 {
 			return nil, fmt.Errorf("invalid csv line %d: expected at least 4 columns", i+1)
 		}
@@ -45,4 +53,40 @@ func ParseCameraCSV(r io.Reader) ([]CameraEntry, error) {
 		entries = append(entries, entry)
 	}
 	return entries, nil
+}
+
+func isEmptyRecord(record []string) bool {
+	if len(record) == 0 {
+		return true
+	}
+	for _, field := range record {
+		if strings.TrimSpace(field) != "" {
+			return false
+		}
+	}
+	return true
+}
+
+func isCommentRecord(record []string) bool {
+	if len(record) == 0 {
+		return false
+	}
+	first := strings.TrimSpace(record[0])
+	return strings.HasPrefix(first, "#")
+}
+
+func isHeaderRecord(record []string) bool {
+	if len(record) < 4 {
+		return false
+	}
+	expected := []string{"ip", "port", "login", "password"}
+	for i, value := range expected {
+		if strings.ToLower(strings.TrimSpace(record[i])) != value {
+			return false
+		}
+	}
+	if len(record) >= 5 {
+		return strings.ToLower(strings.TrimSpace(record[4])) == "model"
+	}
+	return true
 }
