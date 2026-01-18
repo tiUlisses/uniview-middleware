@@ -301,7 +301,7 @@ func getenvInt(key string, fallback int) int {
 func newForwardingHandler(logger *log.Logger) (receiver.HandlerFunc, error) {
 	forwardURL, err := receiver.ForwardURLFromEnv()
 	if err != nil {
-		return nil, err
+		return nil, fmt.Errorf("forwarding requires ANALYTICS_HOST/ANALYTICS_PORT/ANALYTICS_PATH (legacy FORWARD_* supported): %w", err)
 	}
 	mappings, err := receiver.LoadAlarmTypeMappingsFromEnv()
 	if err != nil {

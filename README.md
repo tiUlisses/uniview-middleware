@@ -65,13 +65,11 @@ O receiver monta um payload normalizado com os campos `tag`, `categoria`, `camer
 
 ### Forwarding (encaminhar eventos recebidos)
 
-- `FORWARD_URL`: URL completa para POST (ex.: `http://localhost:9000/webhooks/uniview`)
-- `FORWARD_SCHEME`: esquema (default `http`)
-- `FORWARD_HOST`: host do destino (ex.: `localhost` ou `10.0.0.5`)
-- `FORWARD_PORT`: porta do destino (opcional)
-- `FORWARD_PATH`: path do destino (default `/`)
+- `ANALYTICS_HOST`: host do destino (ex.: `localhost` ou `10.0.0.5`)
+- `ANALYTICS_PORT`: porta do destino
+- `ANALYTICS_PATH`: path do destino (endpoint)
 
-> Use `FORWARD_URL` **ou** `FORWARD_HOST` + `FORWARD_PATH` (com `FORWARD_SCHEME`/`FORWARD_PORT` se necessário).
+> Observação: as chaves antigas `FORWARD_*` continuam aceitas por compatibilidade, mas o fluxo recomendado é usar `ANALYTICS_*`.
 
 ### Subscription / keepalive
 
@@ -117,18 +115,10 @@ export IMAGE_PUSH_MODE=0
 
 3) **Configurar encaminhamento para o servidor de analytics**
 
-Use **uma** das opções abaixo:
-
 ```bash
-export FORWARD_URL=http://analytics.local:9000/webhooks/uniview
-```
-
-ou
-
-```bash
-export FORWARD_HOST=analytics.local
-export FORWARD_PORT=9000
-export FORWARD_PATH=/webhooks/uniview
+export ANALYTICS_HOST=analytics.local
+export ANALYTICS_PORT=9000
+export ANALYTICS_PATH=/webhooks/uniview
 ```
 
 4) **Executar**
@@ -168,7 +158,9 @@ RECEIVER_HOST=0.0.0.0 RECEIVER_PORT=8080 ./univiewd serve
 Exemplo com forwarding:
 
 ```bash
-export FORWARD_URL=http://localhost:9000/webhooks/uniview
+export ANALYTICS_HOST=localhost
+export ANALYTICS_PORT=9000
+export ANALYTICS_PATH=/webhooks/uniview
 export EVENT_TAG=uniview
 export EVENT_CATEGORY=event
 export ALARM_TYPE_MAPPING_JSON='{"Motion":{"ivs_type":"motion","message":"Motion detected"}}'
@@ -207,11 +199,9 @@ export RECEIVER_PORT=8080
 export DURATION=60
 export TYPE_MASK=97663
 export IMAGE_PUSH_MODE=0
-export FORWARD_HOST=localhost
-export FORWARD_PORT=9000
-export FORWARD_PATH=/webhooks/uniview
-# ou, alternativamente:
-# export FORWARD_URL=http://localhost:9000/webhooks/uniview
+export ANALYTICS_HOST=localhost
+export ANALYTICS_PORT=9000
+export ANALYTICS_PATH=/webhooks/uniview
 
 ./univiewd run
 ```
@@ -258,9 +248,9 @@ export RECEIVER_PORT=8080
 export TYPE_MASK=97663
 export DURATION=60
 export IMAGE_PUSH_MODE=0
-export FORWARD_HOST=localhost
-export FORWARD_PORT=9000
-export FORWARD_PATH=/webhooks/uniview
+export ANALYTICS_HOST=localhost
+export ANALYTICS_PORT=9000
+export ANALYTICS_PATH=/webhooks/uniview
 
 ./univiewd run
 ```
