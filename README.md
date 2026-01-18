@@ -30,18 +30,12 @@ examples/                  # Payloads de exemplo + CSV
 
 ### Carregar .env
 
-O binário **não** carrega o arquivo `.env` automaticamente. É necessário exportar as variáveis antes de rodar.
+O binário tenta carregar automaticamente um arquivo `.env` no diretório atual antes de ler as variáveis. Se o arquivo não existir, ele segue normalmente sem erro. Variáveis já definidas no ambiente têm prioridade.
 
-Exemplos:
-
-```bash
-set -a; source .env; set +a; ./univiewd run
-```
-
-Ou:
+Exemplo:
 
 ```bash
-env $(grep -v '^#' .env | xargs) ./univiewd run
+./univiewd run
 ```
 
 ### Autenticação / conexão
