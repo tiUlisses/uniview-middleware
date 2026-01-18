@@ -227,17 +227,90 @@ func backoff(attempt int) time.Duration {
 //
 // NOTE: Field names must be confirmed in the LiteAPI PDF. Adjust candidate keys if needed.
 func extractSubscriptionID(body []byte) string {
-	var payload map[string]any
+	var payload any
 	if err := json.Unmarshal(body, &payload); err != nil {
-		return ""
+		return extractSubscriptionIDFromString(string(body))
 	}
-	keys := []string{"SubscriptionID", "SubscriptionId", "ID", "Id"}
-	for _, key := range keys {
-		if value, ok := payload[key]; ok {
-			if id, ok := value.(string); ok {
+	if id := findSubscriptionID(payload); id != "" {
+		return id
+	}
+	return extractSubscriptionIDFromString(string(body))
+}
+
+func findSubscriptionID(value any) string {
+	switch typed := value.(type) {
+	case map[string]any:
+		keys := []string{
+			"SubscriptionID",
+			"SubscriptionId",
+			"subscriptionId",
+			"SubID",
+			"SubId",
+			"subId",
+			"ID",
+			"Id",
+			"id",
+		}
+		for _, key := range keys {
+			if raw, ok := typed[key]; ok {
+				if id := normalizeSubscriptionValue(raw); id != "" {
+					return id
+				}
+			}
+		}
+		for _, child := range typed {
+			if id := findSubscriptionID(child); id != "" {
+				return id
+			}
+		}
+	case []any:
+		for _, child := range typed {
+			if id := findSubscriptionID(child); id != "" {
 				return id
 			}
 		}
 	}
 	return ""
+}
+
+func normalizeSubscriptionValue(value any) string {
+	switch typed := value.(type) {
+	case string:
+		if strings.TrimSpace(typed) == "" {
+			return ""
+		}
+		if id := extractSubscriptionIDFromReference(typed); id != "" {
+			return id
+		}
+		return typed
+	case float64:
+		if typed == 0 {
+			return ""
+		}
+		return fmt.Sprintf("%.0f", typed)
+	}
+	return ""
+}
+
+func extractSubscriptionIDFromString(body string) string {
+	if id := extractSubscriptionIDFromReference(body); id != "" {
+		return id
+	}
+	return ""
+}
+
+func extractSubscriptionIDFromReference(value string) string {
+	trimmed := strings.TrimSpace(value)
+	if trimmed == "" {
+		return ""
+	}
+	segments := strings.Split(trimmed, "/")
+	if len(segments) < 1 {
+		return ""
+	}
+	last := strings.TrimSpace(segments[len(segments)-1])
+	if last == "" || strings.EqualFold(last, "Subscribers") {
+		return ""
+	}
+	return last
 }
